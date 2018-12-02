@@ -1,0 +1,163 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  S3Bucket:
+    Type: String
+  S3Key:
+    Type: String
+  S3Version:
+    Type: String
+
+Resources:
+  LambdaBasicExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition: {}
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  HelloLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: helloworld.handler
+      Runtime: python3.7
+      Role: !GetAtt 'LambdaBasicExecutionRole.Arn'
+      MemorySize: 128
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+        S3ObjectVersion: !Ref S3Version
+
+  HelloLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${HelloLambda}'
+      RetentionInDays: 30
+
+  HelloDictLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: helloworld_dataclass.handler
+      Runtime: python3.7
+      Role: !GetAtt 'LambdaBasicExecutionRole.Arn'
+      MemorySize: 128
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+        S3ObjectVersion: !Ref S3Version
+
+  HelloDictLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${HelloDictLambda}'
+      RetentionInDays: 30
+
+  ServiceCallLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: service_call.handler
+      Runtime: python3.7
+      Role: !GetAtt 'LambdaBasicExecutionRole.Arn'
+      MemorySize: 128
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+        S3ObjectVersion: !Ref S3Version
+
+  ServiceCallLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceCallLambda}'
+      RetentionInDays: 30
+
+  AmazonAPIGatewayInvokeFullAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+            Condition: {}
+      Path: /
+      Policies:
+        - PolicyName: ApiGateway
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - '*'
+
+  ApiGatewayApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Body:
+        swagger: '2.0'
+        info:
+          description: !Ref AWS::StackName
+          title: !Ref AWS::StackName
+          version: '1.0.0'
+        schemes:
+          - https
+        paths:
+          /hello:
+            get:
+              x-amazon-apigateway-integration:
+                responses: {}
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${HelloLambda.Arn}/invocations
+                credentials: !GetAtt AmazonAPIGatewayInvokeFullAccessRole.Arn
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+          /hello2:
+            get:
+              x-amazon-apigateway-integration:
+                responses: {}
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${HelloDictLambda.Arn}/invocations
+                credentials: !GetAtt AmazonAPIGatewayInvokeFullAccessRole.Arn
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+          /hello3:
+            get:
+              x-amazon-apigateway-integration:
+                responses: {}
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ServiceCallLambda.Arn}/invocations
+                credentials: !GetAtt AmazonAPIGatewayInvokeFullAccessRole.Arn
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGatewayApi
+
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiGatewayDeployment
+      RestApiId: !Ref ApiGatewayApi
+      StageName: 'dev'
+
+Outputs:
+  HelloServiceEndpoint:
+    Value: !Sub https://${ApiGatewayApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/dev/hello
+  HelloDictServiceEndpoint:
+    Value: !Sub https://${ApiGatewayApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/dev/hello2
+  ServiceCallServiceEndpoint:
+    Value: !Sub https://${ApiGatewayApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/dev/hello3
